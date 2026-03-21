@@ -1651,6 +1651,12 @@ AUTOMATION_MIN_INTERVAL = PersistentConfig(
     os.environ.get('AUTOMATION_MIN_INTERVAL', ''),
 )
 
+ICE_SERVERS = PersistentConfig(
+    'ICE_SERVERS',
+    'channels.ice_servers',
+    json.loads(os.environ.get('ICE_SERVERS', '[]')),
+)
+
 ENABLE_NOTES = PersistentConfig(
     'ENABLE_NOTES',
     'notes.enable',
