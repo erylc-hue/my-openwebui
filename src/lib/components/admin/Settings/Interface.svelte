@@ -10,6 +10,15 @@
 	import Switch from '$lib/components/common/Switch.svelte';
 	import Textarea from '$lib/components/common/Textarea.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
+	import ConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
+	import InterfaceDefaultsModal from './Interface/InterfaceDefaultsModal.svelte';
+
+	import { resetAllUsersInterfaceSettings } from '$lib/apis/users';
+
+	// Toggles for the admin-defaults modal and the "reset all users" confirm
+	// dialog rendered at the bottom of this panel.
+	let showInterfaceDefaultsModal = false;
+	let showResetConfirmDialog = false;
 
 	const dispatch = createEventDispatcher();
 
@@ -37,6 +46,20 @@
 
 	const updateInterfaceHandler = async () => {
 		taskConfig = await updateTaskConfig(localStorage.token, taskConfig);
+	};
+
+	const handleResetAllUsersInterfaceSettings = async () => {
+		try {
+			const result = await resetAllUsersInterfaceSettings(localStorage.token);
+			toast.success(
+				$i18n.t('Successfully reset interface settings for {{count}} users', {
+					count: result.users_reset
+				})
+			);
+		} catch (error) {
+			console.error('Error resetting interface settings:', error);
+			toast.error($i18n.t('Failed to reset interface settings'));
+		}
 	};
 
 	let workspaceModels = null;
@@ -92,6 +115,42 @@
 		}}
 	>
 		<div class="  overflow-y-scroll scrollbar-hidden h-full pr-1.5">
+			<div class="mb-3.5">
+				<div class=" mt-0.5 mb-2.5 text-base font-medium">
+					{$i18n.t('Interface Defaults')}
+				</div>
+
+				<hr class=" border-gray-100/30 dark:border-gray-850/30 my-2" />
+
+				<div class="text-xs text-gray-500 dark:text-gray-400 mb-2">
+					{$i18n.t(
+						"Configure default interface settings that apply to all users who haven't customized their own."
+					)}
+				</div>
+
+				<div class="flex flex-col sm:flex-row gap-2">
+					<button
+						type="button"
+						class="px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-200 dark:border-gray-800 hover:bg-gray-100 dark:hover:bg-gray-850 transition"
+						on:click={() => {
+							showInterfaceDefaultsModal = true;
+						}}
+					>
+						{$i18n.t('Configure Defaults')}
+					</button>
+
+					<button
+						type="button"
+						class="px-3 py-1.5 text-xs font-medium rounded-lg border border-red-300 dark:border-red-900/50 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 transition"
+						on:click={() => {
+							showResetConfirmDialog = true;
+						}}
+					>
+						{$i18n.t('Reset All Users Interface Settings')}
+					</button>
+				</div>
+			</div>
+
 			<div class="mb-3.5">
 				<div class=" mt-0.5 mb-2.5 text-base font-medium">{$i18n.t('Tasks')}</div>
 
@@ -417,6 +476,15 @@
 			</button>
 		</div>
 	</form>
+
+	<InterfaceDefaultsModal bind:show={showInterfaceDefaultsModal} />
+
+	<ConfirmDialog
+		title={$i18n.t('Reset All Users Interface Settings')}
+		message={$i18n.t('This will clear all customized interface settings for all users. This action cannot be undone.')}
+		bind:show={showResetConfirmDialog}
+		onConfirm={handleResetAllUsersInterfaceSettings}
+	/>
 {:else}
 	<div class=" h-full w-full flex justify-center items-center">
 		<Spinner className="size-5" />

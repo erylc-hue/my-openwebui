@@ -71,6 +71,8 @@
 	import SyncStatsModal from '$lib/components/chat/Settings/SyncStatsModal.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import { getUserSettings } from '$lib/apis/users';
+	import { getInterfaceDefaults } from '$lib/apis/configs';
+	import { deepMerge, stripNullValues } from '$lib/utils';
 	import dayjs from 'dayjs';
 	import { getChannels } from '$lib/apis/channels';
 
@@ -969,12 +971,55 @@
 				$socket?.on('events', chatEventHandler);
 				$socket?.on('events:channel', channelEventHandler);
 
-				const userSettings = await getUserSettings(localStorage.token);
-				if (userSettings) {
-					settings.set(userSettings.ui);
-				} else {
-					settings.set(JSON.parse(localStorage.getItem('settings') ?? '{}'));
+				// Fetch user settings and admin-configured interface defaults in
+				// parallel — both are independent network calls on the hot
+				// authenticated-load path, and serializing them added
+				// avoidable round-trip latency. Defaults fall back to {} if
+				// the endpoint is unavailable so user settings still apply.
+				const [userSettings, adminDefaults] = await Promise.all([
+					getUserSettings(localStorage.token),
+					getInterfaceDefaults(localStorage.token).catch((e) => {
+						console.warn('Failed to load admin interface defaults:', e);
+						return {};
+					})
+				]);
+
+				// Admin defaults are the base layer; whatever the user has
+				// actually customized overrides them. For brand-new users
+				// getUserSettings() returns null — the whole point of admin
+				// defaults is that THOSE users get them, so always merge
+				// against adminDefaults instead of skipping straight to
+				// localStorage when userSettings is falsy.
+				//
+				// Guard the localStorage read: a stale or hand-edited
+				// localStorage.settings value can be invalid JSON, and
+				// letting JSON.parse throw here would abort the whole
+				// authenticated-load path even when we already have valid
+				// userSettings from the backend.
+				let localStorageSettings: any = {};
+				if (!userSettings?.ui) {
+					const raw = localStorage.getItem('settings');
+					if (raw) {
+						try {
+							localStorageSettings = JSON.parse(raw) ?? {};
+						} catch (parseErr) {
+							console.warn(
+								'Ignoring malformed localStorage.settings during init:',
+								parseErr
+							);
+							localStorageSettings = {};
+						}
+					}
 				}
+				const userUI = userSettings?.ui ?? localStorageSettings ?? {};
+				// User settings commonly carry explicit null for "inherit /
+				// unset" style fields (e.g. textScale, webSearch), and
+				// deepMerge treats source null as an explicit override — so
+				// merging userUI directly would suppress the admin default
+				// for any such field. Strip nulls out of userUI (recursively
+				// for nested objects) so "no value" really means "inherit
+				// the admin default" here.
+				settings.set(deepMerge(adminDefaults ?? {}, stripNullValues(userUI)));
 				setTextScale($settings?.textScale ?? 1);
 
 				// Set up the token expiry check

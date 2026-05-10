@@ -1,5 +1,7 @@
 import logging
 from typing import Optional
+from sqlalchemy import func, cast, text, update
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 import base64
 import io
@@ -16,6 +18,7 @@ from open_webui.models.oauth_sessions import OAuthSessions
 from open_webui.models.groups import Groups
 
 from open_webui.models.users import (
+    User,
     UserModel,
     UserGroupIdsModel,
     UserGroupIdsListResponse,
@@ -677,3 +680,86 @@ async def get_user_groups_by_id(
     user_id: str, user=Depends(get_admin_user), db: AsyncSession = Depends(get_async_session)
 ):
     return await Groups.get_groups_by_member_id(user_id, db=db)
+
+
+############################
+# ResetAllUsersInterfaceSettings
+############################
+
+
+@router.post('/interface/settings/reset', response_model=dict)
+async def reset_all_users_interface_settings(
+    user=Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """
+    Reset all users' interface settings to admin-configured defaults.
+    Clears the 'ui' key in all users' settings. Admin only.
+    """
+    try:
+        # Match dialects explicitly. Falling through to SQLite-specific SQL
+        # (json_set / json_extract) for every non-postgres backend would
+        # silently fail on MySQL / MariaDB / other engines with an opaque
+        # syntax error instead of a clear "unsupported dialect" response.
+        dialect = db.bind.dialect.name
+
+        if dialect == 'postgresql':
+            from sqlalchemy.dialects.postgresql import JSONB
+
+            stmt = (
+                update(User)
+                .where(
+                    User.settings.isnot(None),
+                    User.settings.has_key('ui'),
+                )
+                .values(
+                    settings=func.jsonb_set(
+                        cast(User.settings, JSONB),
+                        '{ui}',
+                        cast('{}', JSONB),
+                    )
+                )
+                .execution_options(synchronize_session=False)
+            )
+            result = await db.execute(stmt)
+            reset_count = result.rowcount
+        elif dialect == 'sqlite':
+            # Native json_set is available since SQLite 3.9+. rowcount on the
+            # UPDATE result reflects the rows actually changed, so no
+            # follow-up SELECT changes() round-trip is needed.
+            result = await db.execute(
+                text(
+                    """
+                    UPDATE user
+                    SET settings = json_set(settings, '$.ui', json('{}'))
+                    WHERE settings IS NOT NULL
+                    AND json_extract(settings, '$.ui') IS NOT NULL
+                    """
+                )
+            )
+            reset_count = result.rowcount
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail=(
+                    f"Resetting interface settings is not implemented for the '{dialect}' "
+                    'database dialect; supported dialects are postgresql and sqlite.'
+                ),
+            )
+
+        await db.commit()
+
+        log.debug(f'Reset interface settings for {reset_count} users by admin {user.id}')
+
+        return {
+            'success': True,
+            'users_reset': reset_count,
+        }
+
+    except SQLAlchemyError as e:
+        await db.rollback()
+        log.exception(f'Database error resetting interface settings: {e}')
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Database error while resetting interface settings',
+        )
