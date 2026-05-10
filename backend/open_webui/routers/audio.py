@@ -82,7 +82,6 @@ SPEECH_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 #
 ##########################################
 
-from pydub import AudioSegment
 from pydub.utils import mediainfo
 
 
